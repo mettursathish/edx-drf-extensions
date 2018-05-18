@@ -27,42 +27,38 @@ class JWTRestrictedApplicationPermission(BasePermission):
         2e) If access_token does not contain the 'required_scopes' then fail the request
         2f) If all above checks succees, pass the permissions check
     """
+    def _token_filters(self, token):
+        # get filters list from jwt token and return dict
+        if jwt_decode_handler(token).has_key('filters'):
+	    filters_list = jwt_decode_handler(token)['filters']
+            filters = {}
+            for each in filters_list:
+                each = each.split(':')
+                if each[0] in filters.keys():
+                    filters[each[0]].append(each[1])
+                else:
+                    filters[each[0]] = [each[1]]
+        return filters
 
     def has_permission(self, request, view):
         """
         Implement the business logic discussed above
         """
-        restricted_oauth_required = False
-        if hasattr(view, 'restricted_oauth_required'):
-            restricted_oauth_required = True
 
         token = request.auth
-
-        if not token:
-            if not restricted_oauth_required:
-                # If we are not an OAuth2 request - some APIs in Open edX allow for Django Session
-                # based authentication, then we must pass here and continue with other
-                # possible authorization checks declared on the API endpoint
-                return True
-            else:
-                return False
 
         # check to see if token is a DOP token
         # if so this represents a client which is implicitly trusted
         # (since it is an internal Open edX application)
         if isinstance(token, DOPAccessToken):
             return True
-
+        
+        if not float(jwt_decode_handler(token)['version']) <= 1.0:
+            return False
         has_permission = super(JWTRestrictedApplicationPermission, self).has_permission(request, view)
         if has_permission:
             # Add a new attributes to the Django request which sets an 'content_org' and 'user' filters
             # which will be used by the view handlers for course filtering
             # based on the rights declared on the RestrictedApplication
-            if jwt_decode_handler(token).has_key('filters'):
-                if jwt_decode_handler(token)['filters'].has_key('content_org'):
-                    setattr(request,'allowed_organization',[jwt_decode_handler(token)['filters']['content_org']])
-                if jwt_decode_handler(token)['filters'].has_key('user'):
-                    setattr(request,'allowed_user',[jwt_decode_handler(token)['filters']['user']])
-
+            setattr(request, 'filters', self._token_filters(token))
         return has_permission
-
